@@ -74,9 +74,10 @@ func (r *HubbleClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 	}
 
-	// 初始化uuid池
+	// 初始化uuid池与当前版本
 	if len(cluster.Status.ActiveUUIDs) == 0 {
 		cluster.Status.ActiveUUIDs = generateUUID(int(cluster.Spec.Replicas))
+		cluster.Status.CurrentVersion = cluster.Spec.Image
 		if err := r.Status().Update(ctx, cluster); err != nil {
 			return ctrl.Result{Requeue: true}, err
 		}
@@ -149,11 +150,11 @@ func (r *HubbleClusterReconciler) syncPods(
 	for _, uuid := range cluster.Status.ActiveUUIDs {
 		if _, ok := existingUuids[uuid]; !ok {
 			pod := r.buildPod(cluster, uuid)
-			if err := r.Create(ctx, pod); err != nil {
+			if err := controllerutil.SetControllerReference(cluster, pod, r.Scheme); err != nil {
 				return err
 			}
 			if err := r.Create(ctx, pod); err != nil {
-				return err
+				return fmt.Errorf("failed to create pod: %w", err)
 			}
 		}
 	}
@@ -176,6 +177,9 @@ func (r *HubbleClusterReconciler) rollingUpgrade(
 		}
 		// 步骤二，创建一个新的pod，使用相同的uuid
 		newPod := r.buildPod(cluster, pod.Labels["hubble-uuid"])
+		if err := controllerutil.SetControllerReference(cluster, newPod, r.Scheme); err != nil {
+			return ctrl.Result{}, err
+		} // 要绑定controller
 		if err := r.Create(ctx, newPod); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to create new pod: %w", err)
 		}
