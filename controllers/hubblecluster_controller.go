@@ -216,6 +216,7 @@ func (r *HubbleClusterReconciler) buildPod(cluster *hubblev1.HubbleCluster, uuid
 			},
 		},
 		Spec: corev1.PodSpec{
+			SecurityContext: cluster.Spec.PodSecurity,
 			Containers: []corev1.Container{{
 				Name:    "hubblecatch",
 				Image:   cluster.Spec.Image,

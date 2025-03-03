@@ -30,10 +30,11 @@ type HubbleClusterSpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// Foo is an example field of HubbleCluster. Edit hubblecluster_types.go to remove/update
-	Replicas int32                  `json:"replicas"`
-	Image    string                 `json:"image"`
-	Env      []corev1.EnvVar        `json:"env,omitempty"` // 环境变量注入
-	EnvFrom  []corev1.EnvFromSource `json:"envFrom,omitempty"`
+	Replicas    int32                      `json:"replicas"`
+	Image       string                     `json:"image"`
+	Env         []corev1.EnvVar            `json:"env,omitempty"` // 环境变量注入
+	EnvFrom     []corev1.EnvFromSource     `json:"envFrom,omitempty"`
+	PodSecurity *corev1.PodSecurityContext `json:"podSecurity,omitempty"`
 }
 
 // HubbleClusterStatus defines the observed state of HubbleCluster
