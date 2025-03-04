@@ -163,7 +163,6 @@ func (r *HubbleClusterReconciler) syncPods(
 		uuid := pod.Labels["hubble-uuid"]
 		if IsPodFailed(&pod) {
 			// 删除故障 Pod
-			fmt.Println("this pod is failed", pod.Labels["hubble-uuid"])
 			if time.Since(pod.CreationTimestamp.Time) > 1*time.Minute { // 做一定的冷却时间
 				if err := r.Delete(ctx, &pod); client.IgnoreNotFound(err) != nil {
 					return fmt.Errorf("failed to delete pod %s: %v", pod.Name, err)
@@ -295,9 +294,18 @@ func (r *HubbleClusterReconciler) buildPod(cluster *hubblev1.HubbleCluster, uuid
 		Spec: corev1.PodSpec{
 			SecurityContext: cluster.Spec.PodSecurity,
 			Containers: []corev1.Container{{
-				Name:      "hubblecatch",
-				Image:     cluster.Spec.Image,
-				Env:       cluster.Spec.Env,
+				Name:  "hubblecatch",
+				Image: cluster.Spec.Image,
+				Env: append(cluster.Spec.Env,
+					corev1.EnvVar{
+						Name: "hubble-uuid", // 容器内环境变量名
+						ValueFrom: &corev1.EnvVarSource{
+							FieldRef: &corev1.ObjectFieldSelector{
+								FieldPath: "metadata.labels['hubble-uuid']", // 从 Label 注入
+							},
+						},
+					},
+				),
 				EnvFrom:   cluster.Spec.EnvFrom,
 				Resources: cluster.Spec.Resources,
 				Ports:     []corev1.ContainerPort{{ContainerPort: 8080}},
