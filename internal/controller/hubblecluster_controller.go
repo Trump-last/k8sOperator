@@ -269,7 +269,7 @@ func (r *HubbleClusterReconciler) buildPod(cluster *hubblev1.HubbleCluster, uuid
 			Labels: map[string]string{
 				"hubble-cluster": cluster.Name,
 				"hubble-uuid":    uuid,
-				"hubble-version": cluster.Spec.Image,
+				"hubble-version": imageHash,
 			},
 		},
 		Spec: corev1.PodSpec{
