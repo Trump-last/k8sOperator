@@ -161,9 +161,9 @@ func (r *HubbleClusterReconciler) syncPods(
 	existingUuids := make(map[string]struct{})
 	for _, pod := range existingPods {
 		uuid := pod.Labels["hubble-uuid"]
-		fmt.Println("this pod uuid is ", uuid)
 		if IsPodFailed(&pod) {
 			// 删除故障 Pod
+			fmt.Println("this pod is failed", pod.Labels["hubble-uuid"])
 			if time.Since(pod.CreationTimestamp.Time) > 1*time.Minute { // 做一定的冷却时间
 				if err := r.Delete(ctx, &pod); client.IgnoreNotFound(err) != nil {
 					return fmt.Errorf("failed to delete pod %s: %v", pod.Name, err)
