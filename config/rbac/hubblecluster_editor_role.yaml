@@ -1,18 +1,20 @@
-# permissions for end users to edit hubbleclusters.
+# This rule is not used by the project hubbleopt itself.
+# It is provided to allow the cluster admin to help manage permissions for users.
+#
+# Grants permissions to create, update, and delete resources within the hubble.example.org.
+# This role is intended for users who need to manage these resources
+# but should not control RBAC or manage permissions for others.
+
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   labels:
-    app.kubernetes.io/name: clusterrole
-    app.kubernetes.io/instance: hubblecluster-editor-role
-    app.kubernetes.io/component: rbac
-    app.kubernetes.io/created-by: k8soperator
-    app.kubernetes.io/part-of: k8soperator
+    app.kubernetes.io/name: hubbleopt
     app.kubernetes.io/managed-by: kustomize
   name: hubblecluster-editor-role
 rules:
 - apiGroups:
-  - hubble.example.com
+  - hubble.example.org
   resources:
   - hubbleclusters
   verbs:
@@ -24,7 +26,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - hubble.example.com
+  - hubble.example.org
   resources:
   - hubbleclusters/status
   verbs:

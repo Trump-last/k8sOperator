@@ -2,19 +2,19 @@
 # This file is used to track the info used to scaffold your project
 # and allow the plugins properly work.
 # More info: https://book.kubebuilder.io/reference/project-config.html
-domain: example.com
+domain: example.org
 layout:
-- go.kubebuilder.io/v3
-projectName: k8soperator
-repo: github.com/Trump-last/k8sOperator
+- go.kubebuilder.io/v4
+projectName: hubbleopt
+repo: git.n.xiaomi.com/xulinfeng1/hubbleopt
 resources:
 - api:
     crdVersion: v1
     namespaced: true
   controller: true
-  domain: example.com
+  domain: example.org
   group: hubble
   kind: HubbleCluster
-  path: github.com/Trump-last/k8sOperator/api/v1
+  path: git.n.xiaomi.com/xulinfeng1/hubbleopt/api/v1
   version: v1
 version: "3"

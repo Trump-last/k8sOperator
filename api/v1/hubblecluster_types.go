@@ -24,20 +24,21 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
-// HubbleClusterSpec defines the desired state of HubbleCluster
+// HubbleClusterSpec defines the desired state of HubbleCluster.
 type HubbleClusterSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// Foo is an example field of HubbleCluster. Edit hubblecluster_types.go to remove/update
-	Replicas    int32                      `json:"replicas"`
-	Image       string                     `json:"image"`
-	Env         []corev1.EnvVar            `json:"env,omitempty"` // 环境变量注入
-	EnvFrom     []corev1.EnvFromSource     `json:"envFrom,omitempty"`
-	PodSecurity *corev1.PodSecurityContext `json:"podSecurity,omitempty"`
+	Replicas    int32                       `json:"replicas"`
+	Image       string                      `json:"image"`
+	PodSecurity *corev1.PodSecurityContext  `json:"podSecurity"`
+	Env         []corev1.EnvVar             `json:"env,omitempty"` // 环境变量注入
+	EnvFrom     []corev1.EnvFromSource      `json:"envFrom,omitempty"`
+	Resources   corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
-// HubbleClusterStatus defines the observed state of HubbleCluster
+// HubbleClusterStatus defines the observed state of HubbleCluster.
 type HubbleClusterStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
@@ -45,10 +46,10 @@ type HubbleClusterStatus struct {
 	ActiveUUIDs    []string `json:"activeUUIDs,omitempty"`
 }
 
-//+kubebuilder:object:root=true
-//+kubebuilder:subresource:status
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
 
-// HubbleCluster is the Schema for the hubbleclusters API
+// HubbleCluster is the Schema for the hubbleclusters API.
 type HubbleCluster struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -57,9 +58,9 @@ type HubbleCluster struct {
 	Status HubbleClusterStatus `json:"status,omitempty"`
 }
 
-//+kubebuilder:object:root=true
+// +kubebuilder:object:root=true
 
-// HubbleClusterList contains a list of HubbleCluster
+// HubbleClusterList contains a list of HubbleCluster.
 type HubbleClusterList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`

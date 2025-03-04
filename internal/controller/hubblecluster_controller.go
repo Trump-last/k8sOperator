@@ -14,14 +14,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controllers
+package controller
 
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -31,8 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	hubblev1 "github.com/Trump-last/k8sOperator/api/v1"
-	"github.com/google/uuid"
+	hubblev1 "git.n.xiaomi.com/xulinfeng1/hubbleopt/api/v1"
 )
 
 // HubbleClusterReconciler reconciles a HubbleCluster object
@@ -41,9 +42,9 @@ type HubbleClusterReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-//+kubebuilder:rbac:groups=hubble.example.com,resources=hubbleclusters,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=hubble.example.com,resources=hubbleclusters/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=hubble.example.com,resources=hubbleclusters/finalizers,verbs=update
+// +kubebuilder:rbac:groups=hubble.example.org,resources=hubbleclusters,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=hubble.example.org,resources=hubbleclusters/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=hubble.example.org,resources=hubbleclusters/finalizers,verbs=update
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -53,7 +54,7 @@ type HubbleClusterReconciler struct {
 // the user.
 //
 // For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.14.4/pkg/reconcile
+// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.20.2/pkg/reconcile
 func (r *HubbleClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = log.FromContext(ctx)
 
@@ -75,9 +76,17 @@ func (r *HubbleClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// 初始化uuid池与当前版本
-	if len(cluster.Status.ActiveUUIDs) == 0 {
-		cluster.Status.ActiveUUIDs = generateUUID(int(cluster.Spec.Replicas))
-		cluster.Status.CurrentVersion = cluster.Spec.Image
+	currentReplicas := len(cluster.Status.ActiveUUIDs)
+	desiredReplicas := int(cluster.Spec.Replicas)
+	if currentReplicas != desiredReplicas {
+		if desiredReplicas > currentReplicas {
+			// 生成新增的 UUID
+			newUUIDs := generateUUID(desiredReplicas - currentReplicas)
+			cluster.Status.ActiveUUIDs = append(cluster.Status.ActiveUUIDs, newUUIDs...)
+		} else {
+			// 删减多余的 UUID（仅保留前 desiredReplicas 个）
+			cluster.Status.ActiveUUIDs = cluster.Status.ActiveUUIDs[:desiredReplicas]
+		}
 		if err := r.Status().Update(ctx, cluster); err != nil {
 			return ctrl.Result{Requeue: true}, err
 		}
@@ -92,6 +101,11 @@ func (r *HubbleClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, fmt.Errorf("failed to sync pods: %w", err)
 	}
 
+	// 再一次同步pod状态
+	existingPods, err = r.findManagedPods(ctx, cluster)
+	if err != nil {
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, fmt.Errorf("failed to sync pods before Upgrade: %w", err)
+	}
 	// Step 6: 滚动升级检查
 	if cluster.Spec.Image != cluster.Status.CurrentVersion {
 		return r.rollingUpgrade(ctx, cluster, existingPods)
@@ -144,7 +158,18 @@ func (r *HubbleClusterReconciler) syncPods(
 ) error {
 	existingUuids := make(map[string]struct{})
 	for _, pod := range existingPods {
-		existingUuids[pod.Labels["hubble-uuid"]] = struct{}{}
+		uuid := pod.Labels["hubble-uuid"]
+		if IsPodFailed(&pod) {
+			// 删除故障 Pod
+			if time.Since(pod.CreationTimestamp.Time) > 1*time.Minute { // 做一定的冷却时间
+				if err := r.Delete(ctx, &pod); client.IgnoreNotFound(err) != nil {
+					return fmt.Errorf("failed to delete pod %s: %v", pod.Name, err)
+				}
+			}
+		} else {
+			// 记录存活的 UUID（包含创建中的正常 Pod）
+			existingUuids[uuid] = struct{}{}
+		}
 	}
 	// 创建缺失的uuid
 	for _, uuid := range cluster.Status.ActiveUUIDs {
@@ -158,7 +183,30 @@ func (r *HubbleClusterReconciler) syncPods(
 			}
 		}
 	}
+	// 删除多余的uuid
+	for _, pod := range existingPods {
+		uuid := pod.Labels["hubble-uuid"]
+		if _, ok := existingUuids[uuid]; !ok {
+			if err := r.Delete(ctx, &pod); client.IgnoreNotFound(err) != nil {
+				return fmt.Errorf("failed to delete pod %s: %v", pod.Name, err)
+			}
+		}
+	}
 	return nil
+}
+
+// Pod状态检查
+func IsPodFailed(pod *corev1.Pod) bool {
+	if pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodUnknown {
+		return true
+	}
+	// 容器级别检查
+	for _, cond := range pod.Status.Conditions {
+		if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionFalse {
+			return true
+		}
+	}
+	return false
 }
 
 // 滚动升级（核心代码）
@@ -168,12 +216,14 @@ func (r *HubbleClusterReconciler) rollingUpgrade(
 	existingPods []corev1.Pod,
 ) (ctrl.Result, error) {
 	for _, pod := range existingPods {
-		if pod.Labels["hubble-version"] == cluster.Spec.Image {
+		if pod.Labels["hubble-version"] == cluster.Spec.Image && !IsPodFailed(&pod) {
 			continue // 版本一致，不需要升级
 		}
-		// 步骤一，先发给old pod一个停止接收消息的信号,让它不要处理新的消息
-		if ok, err := r.sendStopSignal(&pod); !ok || err != nil {
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, err
+		if !IsPodFailed(&pod) { //如果pod正常运行，就要先停止接收消息
+			// 步骤一，先发给old pod一个停止接收消息的信号,让它不要处理新的消息
+			if ok, err := r.sendStopSignal(&pod); !ok || err != nil {
+				return ctrl.Result{RequeueAfter: 5 * time.Second}, err
+			}
 		}
 		// 步骤二，创建一个新的pod，使用相同的uuid
 		newPod := r.buildPod(cluster, pod.Labels["hubble-uuid"])
@@ -185,6 +235,7 @@ func (r *HubbleClusterReconciler) rollingUpgrade(
 		}
 		// 步骤三，等待新的pod进入Ready状态
 		if !r.waitPodReady(newPod) {
+			r.Delete(ctx, newPod) // 如果新的pod无法进入Ready状态，删除它，等待下一次重试
 			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 		}
 		time.Sleep(3 * time.Second) // 制造一定的延迟，确保已经开始双冗的阶段，保证流量数据不会丢失
@@ -197,7 +248,7 @@ func (r *HubbleClusterReconciler) rollingUpgrade(
 
 	// 所有pod都已经升级完成，更新集群状态
 	cluster.Status.CurrentVersion = cluster.Spec.Image
-	if err := r.Update(ctx, cluster); err != nil {
+	if err := r.Status().Update(ctx, cluster); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to update cluster status: %w", err)
 	}
 	return ctrl.Result{}, nil
@@ -205,9 +256,13 @@ func (r *HubbleClusterReconciler) rollingUpgrade(
 
 // 创建一个新的pod
 func (r *HubbleClusterReconciler) buildPod(cluster *hubblev1.HubbleCluster, uuid string) *corev1.Pod {
+	// 生成镜像版本的短哈希（8位）
+	hasher := fnv.New32a()
+	hasher.Write([]byte(cluster.Spec.Image))
+	imageHash := fmt.Sprintf("%x", hasher.Sum32())[:6]
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("%s-%s", cluster.Name, uuid[:8]),
+			Name:      fmt.Sprintf("%s-%s-%s", cluster.Name, uuid[:6], imageHash),
 			Namespace: cluster.Namespace,
 			Labels: map[string]string{
 				"hubble-cluster": cluster.Name,
@@ -218,11 +273,12 @@ func (r *HubbleClusterReconciler) buildPod(cluster *hubblev1.HubbleCluster, uuid
 		Spec: corev1.PodSpec{
 			SecurityContext: cluster.Spec.PodSecurity,
 			Containers: []corev1.Container{{
-				Name:    "hubblecatch",
-				Image:   cluster.Spec.Image,
-				Env:     cluster.Spec.Env,
-				EnvFrom: cluster.Spec.EnvFrom,
-				Ports:   []corev1.ContainerPort{{ContainerPort: 8080}},
+				Name:      "hubblecatch",
+				Image:     cluster.Spec.Image,
+				Env:       cluster.Spec.Env,
+				EnvFrom:   cluster.Spec.EnvFrom,
+				Resources: cluster.Spec.Resources,
+				Ports:     []corev1.ContainerPort{{ContainerPort: 8080}},
 				ReadinessProbe: &corev1.Probe{
 					ProbeHandler: corev1.ProbeHandler{
 						HTTPGet: &corev1.HTTPGetAction{
@@ -262,21 +318,18 @@ func (r *HubbleClusterReconciler) buildPod(cluster *hubblev1.HubbleCluster, uuid
 
 // 发送停止接收MQ消息的信号
 func (r *HubbleClusterReconciler) sendStopSignal(pod *corev1.Pod) (bool, error) {
-	resp, err := http.Post(
-		fmt.Sprintf("http://%s:8080/stop", pod.Status.PodIP),
-		"",
-		nil,
-	)
-	if err != nil {
-		return false, nil // 网络问题允许重试
+	client := &http.Client{Timeout: 5 * time.Second} // 设置超时
+	url := fmt.Sprintf("http://%s:8080/stop", pod.Status.PodIP)
+	resp, err := client.Post(url, "", nil)
+	if err == nil && resp.StatusCode == http.StatusOK {
+		return true, nil
 	}
-	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK, nil
+	return false, nil
 }
 
 // 等待 Pod 进入 Ready 状态
 func (r *HubbleClusterReconciler) waitPodReady(pod *corev1.Pod) bool {
-	for i := 0; i < 45; i++ {
+	for i := 0; i < 20; i++ {
 		key := client.ObjectKeyFromObject(pod)
 		if err := r.Get(context.Background(), key, pod); err == nil {
 			for _, cond := range pod.Status.Conditions {
@@ -294,5 +347,7 @@ func (r *HubbleClusterReconciler) waitPodReady(pod *corev1.Pod) bool {
 func (r *HubbleClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&hubblev1.HubbleCluster{}).
+		Owns(&corev1.Pod{}).
+		Named("hubblecluster").
 		Complete(r)
 }

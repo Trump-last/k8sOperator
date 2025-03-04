@@ -1,33 +1,11 @@
----
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  creationTimestamp: null
+  labels:
+    app.kubernetes.io/name: hubbleopt
+    app.kubernetes.io/managed-by: kustomize
   name: manager-role
 rules:
-- apiGroups:
-  - hubble.example.com
-  resources:
-  - hubbleclusters
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - hubble.example.com
-  resources:
-  - hubbleclusters/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - hubble.example.com
-  resources:
-  - hubbleclusters/status
-  verbs:
-  - get
-  - patch
-  - update
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]

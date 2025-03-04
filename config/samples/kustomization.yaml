@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- hubble_v1_hubblecluster.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples
