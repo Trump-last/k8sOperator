@@ -201,11 +201,13 @@ func (r *HubbleClusterReconciler) syncPods(
 // Pod状态检查
 func IsPodFailed(pod *corev1.Pod) bool {
 	if pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodUnknown {
+		fmt.Println("in pod state check pod failed")
 		return true
 	}
 	// 容器级别检查
 	for _, cond := range pod.Status.Conditions {
 		if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionFalse {
+			fmt.Println("in container state check pod failed")
 			return true
 		}
 	}
