@@ -161,6 +161,7 @@ func (r *HubbleClusterReconciler) syncPods(
 	existingUuids := make(map[string]struct{})
 	for _, pod := range existingPods {
 		uuid := pod.Labels["hubble-uuid"]
+		fmt.Println("this pod uuid is ", uuid)
 		if IsPodFailed(&pod) {
 			// 删除故障 Pod
 			if time.Since(pod.CreationTimestamp.Time) > 1*time.Minute { // 做一定的冷却时间
