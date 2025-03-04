@@ -45,6 +45,8 @@ type HubbleClusterReconciler struct {
 // +kubebuilder:rbac:groups=hubble.example.org,resources=hubbleclusters,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=hubble.example.org,resources=hubbleclusters/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=hubble.example.org,resources=hubbleclusters/finalizers,verbs=update
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=pods/status,verbs=get
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
