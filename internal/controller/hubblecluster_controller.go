@@ -265,7 +265,7 @@ func (r *HubbleClusterReconciler) rollingUpgrade(
 		if err := r.Delete(ctx, &pod); err != nil {
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, err
 		}
-		return ctrl.Result{Requeue: true}, nil
+		// 继续下一个pod
 	}
 
 	// 所有pod都已经升级完成，更新集群状态
