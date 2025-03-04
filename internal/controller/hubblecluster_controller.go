@@ -200,14 +200,28 @@ func (r *HubbleClusterReconciler) syncPods(
 
 // Pod状态检查
 func IsPodFailed(pod *corev1.Pod) bool {
+	// 情况一：Pod Phase 已经是 Failed/Unknown（直接判定失败）
 	if pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodUnknown {
-		fmt.Println("in pod state check pod failed")
 		return true
 	}
-	// 容器级别检查
-	for _, cond := range pod.Status.Conditions {
-		if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionFalse {
-			fmt.Println("in container state check pod failed")
+
+	// 情况二：Pod长时间卡在 Pending，且有明确的错误原因（例如镜像拉取失败）
+	if pod.Status.Phase == corev1.PodPending {
+		for _, containerStatus := range pod.Status.ContainerStatuses {
+			waiting := containerStatus.State.Waiting
+			if waiting != nil &&
+				(waiting.Reason == "ImagePullBackOff" ||
+					waiting.Reason == "ErrImagePull" ||
+					waiting.Reason == "CrashLoopBackOff") {
+				return true
+			}
+		}
+		// 如果Pending时间超过阈值（例如5分钟），可视为失败（根据实际需求添加此逻辑）
+	}
+
+	// 情况三：容器异常退出（Exit Code非0）
+	for _, containerStatus := range pod.Status.ContainerStatuses {
+		if term := containerStatus.State.Terminated; term != nil && term.ExitCode != 0 {
 			return true
 		}
 	}
