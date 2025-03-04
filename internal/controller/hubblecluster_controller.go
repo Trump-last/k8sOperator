@@ -217,8 +217,11 @@ func (r *HubbleClusterReconciler) rollingUpgrade(
 	cluster *hubblev1.HubbleCluster,
 	existingPods []corev1.Pod,
 ) (ctrl.Result, error) {
+	hasher := fnv.New32a()
+	hasher.Write([]byte(cluster.Spec.Image))
+	imageHash := fmt.Sprintf("%x", hasher.Sum32())[:6]
 	for _, pod := range existingPods {
-		if pod.Labels["hubble-version"] == cluster.Spec.Image && !IsPodFailed(&pod) {
+		if pod.Labels["hubble-version"] == imageHash && !IsPodFailed(&pod) {
 			continue // 版本一致，不需要升级
 		}
 		if !IsPodFailed(&pod) { //如果pod正常运行，就要先停止接收消息
