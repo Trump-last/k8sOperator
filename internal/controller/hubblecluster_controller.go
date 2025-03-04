@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -235,7 +236,7 @@ func (r *HubbleClusterReconciler) rollingUpgrade(
 ) (ctrl.Result, error) {
 	hasher := fnv.New32a()
 	hasher.Write([]byte(cluster.Spec.Image))
-	imageHash := fmt.Sprintf("%x", hasher.Sum32())[:6]
+	imageHash := fmt.Sprintf("%x", hasher.Sum32())
 	for _, pod := range existingPods {
 		if pod.Labels["hubble-version"] == imageHash && !IsPodFailed(&pod) {
 			continue // 版本一致，不需要升级
@@ -268,8 +269,18 @@ func (r *HubbleClusterReconciler) rollingUpgrade(
 	}
 
 	// 所有pod都已经升级完成，更新集群状态
-	cluster.Status.CurrentVersion = cluster.Spec.Image
-	if err := r.Status().Update(ctx, cluster); err != nil {
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// 获取最新版本的资源
+		latestCluster := &hubblev1.HubbleCluster{}
+		if err := r.Get(ctx, client.ObjectKeyFromObject(cluster), latestCluster); err != nil {
+			return err
+		}
+		// 更新状态
+		latestCluster.Status.CurrentVersion = latestCluster.Spec.Image
+		return r.Status().Update(ctx, latestCluster)
+	})
+
+	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to update cluster status: %w", err)
 	}
 	return ctrl.Result{}, nil
@@ -280,10 +291,20 @@ func (r *HubbleClusterReconciler) buildPod(cluster *hubblev1.HubbleCluster, uuid
 	// 生成镜像版本的短哈希（8位）
 	hasher := fnv.New32a()
 	hasher.Write([]byte(cluster.Spec.Image))
-	imageHash := fmt.Sprintf("%x", hasher.Sum32())[:6]
+	imageHash := fmt.Sprintf("%x", hasher.Sum32())
+	timestamp := time.Now().Format("20060102150405")
+	name := fmt.Sprintf("%s-%s-%s",
+		cluster.Name,
+		uuid[:6],
+		timestamp,
+	)
+	// 确保名称不超过63字符（K8s限制）
+	if len(name) > 63 {
+		name = name[:63]
+	}
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("%s-%s-%s", cluster.Name, uuid[:6], imageHash),
+			Name:      name,
 			Namespace: cluster.Namespace,
 			Labels: map[string]string{
 				"hubble-cluster": cluster.Name,
