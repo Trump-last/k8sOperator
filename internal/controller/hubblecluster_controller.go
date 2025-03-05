@@ -25,6 +25,7 @@ import (
 
 	"github.com/google/uuid"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -146,8 +147,14 @@ func (r *HubbleClusterReconciler) cleanUpResources(ctx context.Context, cluster 
 // 查找当前集群管理的 Pod
 func (r *HubbleClusterReconciler) findManagedPods(ctx context.Context, cluster *hubblev1.HubbleCluster) ([]corev1.Pod, error) {
 	var pods corev1.PodList
-	if err := r.List(ctx, &pods, client.InNamespace(cluster.Namespace),
-		client.MatchingLabels{"hubble-cluster": cluster.Name}); err != nil {
+	// if err := r.List(ctx, &pods, client.InNamespace(cluster.Namespace),
+	// 	client.MatchingLabels{"hubble-cluster": cluster.Name}); err != nil {
+	// 	return nil, err
+	// }
+	if err := r.Client.List(ctx, &pods,
+		client.InNamespace(cluster.Namespace),
+		client.MatchingLabels{"hubble-cluster": cluster.Name},
+	); err != nil {
 		return nil, err
 	}
 	return pods.Items, nil
@@ -199,10 +206,13 @@ func (r *HubbleClusterReconciler) syncPods(
 				return err
 			}
 			if err := r.Create(ctx, pod); err != nil {
+				if apierrors.IsAlreadyExists(err) {
+					continue
+				}
 				return fmt.Errorf("failed to create pod: %w", err)
 			}
+			fmt.Println("In syncPods, create pod for uuid:", uuid)
 		}
-		fmt.Println("In syncPods, create pod for uuid:", uuid)
 	}
 	return nil
 }
@@ -249,14 +259,12 @@ func (r *HubbleClusterReconciler) rollingUpgrade(
 	imageHash := fmt.Sprintf("%x", hasher.Sum32())
 	fmt.Println("Start rolling upgrade with ", len(existingPods), "pods")
 	for _, pod := range existingPods {
-		if pod.Labels["hubble-version"] == imageHash && !IsPodFailed(&pod) {
-			continue // 版本一致，不需要升级
+		if pod.Labels["hubble-version"] == imageHash && IsPodFailed(&pod) {
+			continue // 版本一致或者pod有问题，不需要升级
 		}
-		if !IsPodFailed(&pod) { //如果pod正常运行，就要先停止接收消息
-			// 步骤一，先发给old pod一个停止接收消息的信号,让它不要处理新的消息
-			if ok, err := r.sendStopSignal(&pod); !ok || err != nil {
-				return ctrl.Result{RequeueAfter: 5 * time.Second}, err
-			}
+		// 步骤一，先发给old pod一个停止接收消息的信号,让它不要处理新的消息
+		if ok, err := r.sendStopSignal(&pod); !ok || err != nil {
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, err
 		}
 		// 步骤二，创建一个新的pod，使用相同的uuid
 		newPod := r.buildPod(cluster, pod.Labels["hubble-uuid"])
@@ -265,6 +273,9 @@ func (r *HubbleClusterReconciler) rollingUpgrade(
 			return ctrl.Result{}, err
 		} // 要绑定controller
 		if err := r.Create(ctx, newPod); err != nil {
+			if apierrors.IsAlreadyExists(err) {
+				continue
+			}
 			return ctrl.Result{}, fmt.Errorf("failed to create new pod: %w", err)
 		}
 		// 步骤三，等待新的pod进入Ready状态
@@ -308,11 +319,10 @@ func (r *HubbleClusterReconciler) buildPod(cluster *hubblev1.HubbleCluster, uuid
 	hasher := fnv.New32a()
 	hasher.Write([]byte(cluster.Spec.Image))
 	imageHash := fmt.Sprintf("%x", hasher.Sum32())
-	timestamp := time.Now().Format("20060102150405")
 	name := fmt.Sprintf("%s-%s-%s",
 		cluster.Name,
-		uuid[:6],
-		timestamp,
+		uuid,
+		imageHash,
 	)
 	// 确保名称不超过63字符（K8s限制）
 	if len(name) > 63 {
