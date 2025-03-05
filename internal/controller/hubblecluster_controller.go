@@ -159,21 +159,36 @@ func (r *HubbleClusterReconciler) syncPods(
 	cluster *hubblev1.HubbleCluster,
 	existingPods []corev1.Pod,
 ) error {
+	// 1. 构建活跃 UUID 集合
+	activeUUIDs := make(map[string]struct{})
+	for _, uuid := range cluster.Status.ActiveUUIDs {
+		activeUUIDs[uuid] = struct{}{}
+	}
+
+	// 2. 遍历现有 Pod，区分活跃和非活跃状态处理
 	existingUuids := make(map[string]struct{})
 	for _, pod := range existingPods {
 		uuid := pod.Labels["hubble-uuid"]
-		if IsPodFailed(&pod) {
-			// 删除故障 Pod
-			if time.Since(pod.CreationTimestamp.Time) > 1*time.Minute { // 做一定的冷却时间
-				if err := r.Delete(ctx, &pod); client.IgnoreNotFound(err) != nil {
-					return fmt.Errorf("failed to delete pod %s: %v", pod.Name, err)
+		if _, active := activeUUIDs[uuid]; active {
+			// 若属于活跃列表：检查是否为失效 Pod，应用冷却时间
+			if IsPodFailed(&pod) {
+				if time.Since(pod.CreationTimestamp.Time) > 1*time.Minute {
+					if err := r.Delete(ctx, &pod); client.IgnoreNotFound(err) != nil {
+						return fmt.Errorf("failed to delete failed pod %s: %v", pod.Name, err)
+					}
 				}
+			} else {
+				// 存活状态或有用的 Pod，记录 UUID
+				existingUuids[uuid] = struct{}{}
 			}
 		} else {
-			// 记录存活的 UUID（包含创建中的正常 Pod）
-			existingUuids[uuid] = struct{}{}
+			// 不属于活跃列表的 Pod：立即删除（无论是否失败）
+			if err := r.Delete(ctx, &pod); client.IgnoreNotFound(err) != nil {
+				return fmt.Errorf("failed to delete obsolete pod %s: %v", pod.Name, err)
+			}
 		}
 	}
+
 	// 创建缺失的uuid
 	for _, uuid := range cluster.Status.ActiveUUIDs {
 		if _, ok := existingUuids[uuid]; !ok {
@@ -183,15 +198,6 @@ func (r *HubbleClusterReconciler) syncPods(
 			}
 			if err := r.Create(ctx, pod); err != nil {
 				return fmt.Errorf("failed to create pod: %w", err)
-			}
-		}
-	}
-	// 删除多余的uuid
-	for _, pod := range existingPods {
-		uuid := pod.Labels["hubble-uuid"]
-		if _, ok := existingUuids[uuid]; !ok {
-			if err := r.Delete(ctx, &pod); client.IgnoreNotFound(err) != nil {
-				return fmt.Errorf("failed to delete pod %s: %v", pod.Name, err)
 			}
 		}
 	}
