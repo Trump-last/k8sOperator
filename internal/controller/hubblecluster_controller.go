@@ -159,12 +159,13 @@ func (r *HubbleClusterReconciler) syncPods(
 	cluster *hubblev1.HubbleCluster,
 	existingPods []corev1.Pod,
 ) error {
+	fmt.Println("start syncPods")
 	// 1. 构建活跃 UUID 集合
 	activeUUIDs := make(map[string]struct{})
 	for _, uuid := range cluster.Status.ActiveUUIDs {
 		activeUUIDs[uuid] = struct{}{}
 	}
-
+	fmt.Println("ActiveUUIDs:", activeUUIDs)
 	// 2. 遍历现有 Pod，区分活跃和非活跃状态处理
 	existingUuids := make(map[string]struct{})
 	for _, pod := range existingPods {
@@ -172,6 +173,7 @@ func (r *HubbleClusterReconciler) syncPods(
 		if _, active := activeUUIDs[uuid]; active {
 			// 若属于活跃列表：检查是否为失效 Pod，应用冷却时间
 			if IsPodFailed(&pod) {
+				fmt.Printf("in syncPods, %s failed", pod.Name)
 				if time.Since(pod.CreationTimestamp.Time) > 1*time.Minute {
 					if err := r.Delete(ctx, &pod); client.IgnoreNotFound(err) != nil {
 						return fmt.Errorf("failed to delete failed pod %s: %v", pod.Name, err)
@@ -188,7 +190,7 @@ func (r *HubbleClusterReconciler) syncPods(
 			}
 		}
 	}
-
+	fmt.Println("ExistingUUIDs:", existingUuids)
 	// 创建缺失的uuid
 	for _, uuid := range cluster.Status.ActiveUUIDs {
 		if _, ok := existingUuids[uuid]; !ok {
@@ -200,6 +202,7 @@ func (r *HubbleClusterReconciler) syncPods(
 				return fmt.Errorf("failed to create pod: %w", err)
 			}
 		}
+		fmt.Println("In syncPods, create pod for uuid:", uuid)
 	}
 	return nil
 }
@@ -240,9 +243,11 @@ func (r *HubbleClusterReconciler) rollingUpgrade(
 	cluster *hubblev1.HubbleCluster,
 	existingPods []corev1.Pod,
 ) (ctrl.Result, error) {
+	upnum := 0
 	hasher := fnv.New32a()
 	hasher.Write([]byte(cluster.Spec.Image))
 	imageHash := fmt.Sprintf("%x", hasher.Sum32())
+	fmt.Println("Start rolling upgrade with ", len(existingPods), "pods")
 	for _, pod := range existingPods {
 		if pod.Labels["hubble-version"] == imageHash && !IsPodFailed(&pod) {
 			continue // 版本一致，不需要升级
@@ -255,6 +260,7 @@ func (r *HubbleClusterReconciler) rollingUpgrade(
 		}
 		// 步骤二，创建一个新的pod，使用相同的uuid
 		newPod := r.buildPod(cluster, pod.Labels["hubble-uuid"])
+		fmt.Println("In rolling upgrade, create new pod for uuid:", pod.Labels["hubble-uuid"])
 		if err := controllerutil.SetControllerReference(cluster, newPod, r.Scheme); err != nil {
 			return ctrl.Result{}, err
 		} // 要绑定controller
@@ -271,9 +277,13 @@ func (r *HubbleClusterReconciler) rollingUpgrade(
 		if err := r.Delete(ctx, &pod); err != nil {
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, err
 		}
+		upnum++
 		// 继续下一个pod
 	}
-
+	if upnum == 0 {
+		return ctrl.Result{}, nil
+	}
+	fmt.Println("Rolling upgrade finished")
 	// 所有pod都已经升级完成，更新集群状态
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		// 获取最新版本的资源
